@@ -13,6 +13,25 @@ const dbFile = 'winners.db';
 // Utilisation de la bibliothèque 'cors' pour gérer les requêtes cross-origin
 app.use(cors());
 
+// AJOUTEZ CETTE ROUTE APRÈS app.use(cors());
+
+// Health check pour Railway
+app.get('/health', (req, res) => {
+    res.status(200).json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        service: 'INKY Tombola API'
+    });
+});
+
+// Route racine
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'INKY Tombola API is running!',
+        endpoints: ['/winners', '/api/draw-status', '/api/draw-info', '/health']
+    });
+});
+
 // ➡️ Gérer l'instance de la base de données de manière centralisée
 const db = new sqlite3.Database(dbFile, (err) => {
     if (err) {
@@ -110,5 +129,6 @@ process.on('SIGINT', () => {
     });
 
 });
+
 
 
