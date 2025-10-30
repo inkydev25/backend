@@ -95,7 +95,7 @@ app.get('/api/draw-status', (req, res) => {
 });
 
 // Démarrer le serveur
-app.listen(port, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`Serveur d'API écoutant sur http://localhost:${port}`);
 });
 
@@ -108,4 +108,5 @@ process.on('SIGINT', () => {
         console.log('Fermeture de la connexion à la base de données.');
         process.exit(0);
     });
+
 });
