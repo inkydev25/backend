@@ -1,4 +1,6 @@
 // draw.js
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import dotenv from "dotenv";
 import { ethers, getBytes } from "ethers";
 import fs from "fs";
@@ -7,27 +9,44 @@ import sqlite3 from 'sqlite3';
 import cron from 'node-cron';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// ===================== VÉRIFICATION MODE AUTONOME =====================
+const isMainModule = import.meta.url === `file://${__filename}`;
+
+if (!isMainModule) {
+    console.log('🔧 Mode Import - Worker chargé par un autre module');
+    process.exit(0);
+}
+
+console.log('🔧 Mode Worker - Démarrage autonome du script de tirage...');
 
 // ===================== CONFIG =====================
+dotenv.config();
+
 const BATCH_SIZE = 50000;
 const POLL_INTERVAL = 15 * 1000;
 const CONFIRMATIONS = 3;
 const ETH_BLOCKS_N = 5;
 const MIN_PARTICIPANTS = 5;
+
 // CONSTANTES POUR LA GESTION DES FONDS
-const EXTERNAL_WALLET = "0x20dd4f9857A737E4b762bB8857499e22CdA70Edc"; // Adresse du Bounty Wallet
+const EXTERNAL_WALLET = "0x20dd4f9857A737E4b762bB8857499e22CdA70Edc";
 const INKY_ADDRESS = "0x6EB2C1fE4e3B48af4905A0209658810B61343438";
 const BURN_DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
-
 const TICKET_SALE_ADDRESS = "0xF494Ba7706A556D9af11E9eF5bf2E20F05F4Da33";
-const PRIVATE_KEY = process.env.PRIVATE_KEY; // Clé privée de l'Owner (pour tout signer)
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+
+// VÉRIFICATION DE LA CLÉ PRIVÉE
+console.log('🔑 Private key length:', process.env.PRIVATE_KEY ? process.env.PRIVATE_KEY.length : 'NOT FOUND');
 
 if (!PRIVATE_KEY) {
-    throw new Error("PRIVATE_KEY not defined in .env");
+    console.error('❌ ERREUR: PRIVATE_KEY not defined in environment variables');
+    process.exit(1);
 }
 
-// TICKET_SALE_ABI MIS À JOUR
+// TICKET_SALE_ABI
 const TICKET_SALE_ABI = [
     "function currentRoundId() view returns (uint256)",
     "function transferBountyToWinner(address winner) external", 
@@ -39,6 +58,7 @@ const TICKET_SALE_ABI = [
     "event BountyTransferred(uint256 roundId, address indexed winner, uint256 prizeAmount, uint256 burnAmount)", 
     "event NewRoundStarted(uint256 newRoundId)"
 ];
+
 // ABI du token INKY
 const INKY_ABI = [
     "function balanceOf(address) view returns (uint256)",
@@ -46,15 +66,20 @@ const INKY_ABI = [
     "function transferFrom(address from, address to, uint256 amount) returns (bool)", 
     "function allowance(address owner, address spender) view returns (uint256)" 
 ];
+
 // ===================== PROVIDERS & DB =====================
+console.log('🌐 Initialisation des providers...');
 const nexeraProvider = new ethers.JsonRpcProvider("https://rpc.testnet.nexera.network");
 const inkyContract = new ethers.Contract(INKY_ADDRESS, INKY_ABI, nexeraProvider);
 const ticketSaleContract = new ethers.Contract(TICKET_SALE_ADDRESS, TICKET_SALE_ABI, nexeraProvider);
+
+console.log('🗄️ Connexion à la base de données...');
 const db = new sqlite3.Database('winners.db', (err) => {
     if (err) {
-        console.error('Erreur lors de la connexion à la BDD', err.message);
+        console.error('❌ Erreur lors de la connexion à la BDD', err.message);
+        process.exit(1);
     } else {
-        console.log('Connecté à la base de données SQLite pour le tirage.');
+        console.log('✅ Connecté à la base de données SQLite pour le tirage.');
         db.serialize(() => {
             db.run(`
                 CREATE TABLE IF NOT EXISTS draw_status (
@@ -78,9 +103,15 @@ const db = new sqlite3.Database('winners.db', (err) => {
                     newRoundTxHash TEXT
                 )
             `);
+            
             db.get('SELECT COUNT(*) AS count FROM draw_status', (err, row) => {
+                if (err) {
+                    console.error('Erreur vérification draw_status:', err.message);
+                    return;
+                }
                 if (row && row.count === 0) {
                     db.run('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, ?, ?)', ['termine', new Date().toISOString()]);
+                    console.log('✅ Table draw_status initialisée');
                 }
             });
         });
@@ -111,9 +142,9 @@ async function setDrawStatus(status) {
         const date = new Date().toISOString();
         const sql = 'UPDATE draw_status SET status = ?, lastDrawDate = ? WHERE id = 1';
         await runDB(sql, [status, date]);
-        console.log(`Statut du tirage mis à jour: ${status}`);
+        console.log(`📊 Statut du tirage mis à jour: ${status}`);
     } catch (err) {
-        console.error('Erreur lors de la mise à jour du statut', err.message);
+        console.error('❌ Erreur lors de la mise à jour du statut', err.message);
         throw err;
     }
 }
@@ -128,7 +159,7 @@ async function checkBountyBalance() {
             decimals
         };
     } catch (err) {
-        console.error("Erreur lors de la vérification du solde du bounty wallet :", err.message);
+        console.error("❌ Erreur lors de la vérification du solde du bounty wallet :", err.message);
         return { balanceBN: BigInt(0), balanceFormatted: 0, decimals: 18 };
     }
 }
@@ -165,7 +196,7 @@ async function fetchTickets(roundId) {
         });
         fromBlock = toBlock + 1;
     }
-    console.log(`Total tickets for round ${roundId}:`, tickets.length);
+    console.log(`🎫 Total tickets for round ${roundId}:`, tickets.length);
     return tickets;
 }
 
@@ -212,7 +243,7 @@ async function waitForConfirmedEthBlocks(timestamp, n = ETH_BLOCKS_N) {
                 await new Promise(r => setTimeout(r, POLL_INTERVAL));
             }
         } catch (err) {
-            console.log("Error fetching NXRA blocks:", err.message);
+            console.log("❌ Error fetching NXRA blocks:", err.message);
             await new Promise(r => setTimeout(r, POLL_INTERVAL));
         }
     }
@@ -220,15 +251,11 @@ async function waitForConfirmedEthBlocks(timestamp, n = ETH_BLOCKS_N) {
     return blocks.map(b => b.hash);
 }
 
-// NOUVELLE FONCTION: Exécuter le transfert via le Smart Contract (gère le plafond et le burn)
 async function executeContractTransfer(winner) {
     const wallet = new ethers.Wallet(PRIVATE_KEY, nexeraProvider);
     const contractWithSigner = new ethers.Contract(TICKET_SALE_ADDRESS, TICKET_SALE_ABI, wallet);
     
-    // Vérification de l'allowance (vérifie que le SC a la permission de dépenser les fonds du Bounty Wallet)
     const bountyData = await checkBountyBalance(); 
-    
-    // ⚠️ CORRECTION ICI: Utiliser inkyContract pour appeler allowance
     const allowanceBN = await inkyContract.allowance(EXTERNAL_WALLET, TICKET_SALE_ADDRESS); 
     
     if (allowanceBN < bountyData.balanceBN) {
@@ -237,15 +264,12 @@ async function executeContractTransfer(winner) {
     
     console.log(`⏳ Executing Bounty transfer via Smart Contract to winner ${winner}...`);
     
-    // 1. Envoyer la transaction au SC
     const tx = await contractWithSigner.transferBountyToWinner(winner);
     console.log(`⏳ Bounty transfer transaction sent. Tx hash: ${tx.hash}`);
     
-    // 2. Attendre la confirmation
     const receipt = await tx.wait(CONFIRMATIONS); 
     console.log(`✅ Bounty transfer confirmed.`);
 
-    // 3. Récupérer les données de l'événement BountyTransferred
     const bountyTransferredEvent = receipt.logs.find(log => {
         try {
             return contractWithSigner.interface.parseLog(log)?.name === 'BountyTransferred';
@@ -255,11 +279,10 @@ async function executeContractTransfer(winner) {
     });
 
     if (!bountyTransferredEvent) {
-        throw new Error("BountyTransferred event not found in transaction receipt. The SC did not emit the event.");
+        throw new Error("BountyTransferred event not found in transaction receipt.");
     }
     
     const parsedLog = contractWithSigner.interface.parseLog(bountyTransferredEvent);
-    // prizeAmount et burnAmount sont déjà formatés en INKY normalisé par le SC
     const { prizeAmount, burnAmount } = parsedLog.args;
 
     return {
@@ -268,7 +291,6 @@ async function executeContractTransfer(winner) {
         burnAmount: burnAmount.toString() 
     };
 }
-
 
 async function startNextRound() {
     const wallet = new ethers.Wallet(PRIVATE_KEY, nexeraProvider);
@@ -281,7 +303,6 @@ async function startNextRound() {
     return tx.hash;
 }
 
-// Fonction de génération de PDF MISE À JOUR
 async function generatePDFReport(data, roundId, contractTxHash = null, newRoundTxHash = null) {
     const staticFileName = `INKY_Tombola_report.pdf`;
     const archiveDir = `archives_rounds_pdf`;
@@ -289,10 +310,9 @@ async function generatePDFReport(data, roundId, contractTxHash = null, newRoundT
 
     if (!fs.existsSync(archiveDir)) {
         fs.mkdirSync(archiveDir, { recursive: true });
-        console.log(`Dossier d'archives créé: ${archiveDir}`);
+        console.log(`📁 Dossier d'archives créé: ${archiveDir}`);
     }
 
-    // Récupérer le plafond actuel du SC pour le reporting
     const maxBountyAmountINKY = await ticketSaleContract.maxBountyAmountINKY();
     const maxBountyAmount = maxBountyAmountINKY.toString();
 
@@ -320,7 +340,6 @@ async function generatePDFReport(data, roundId, contractTxHash = null, newRoundT
         doc.text(`Winner index: ${data.winnerIndex}`);
         doc.text(`Winning wallet: ${data.winner}`);
         
-        // Affichage du prix 
         doc.text(`Prize amount transferred to winner (Capped at ${maxBountyAmount} INKY): ${data.prizeAmount} INKY`);
 
         if (data.burnAmount && parseFloat(data.burnAmount) > 0) {
@@ -335,6 +354,7 @@ async function generatePDFReport(data, roundId, contractTxHash = null, newRoundT
         doc.text("This report is automatically generated to ensure transparency and verifiability.", { italics: true });
         doc.end();
     };
+    
     createAndWritePdf(staticFileName);
     console.log(`📄 PDF generated (static): ${staticFileName}`);
     
@@ -364,9 +384,9 @@ async function saveWinnerToDB(winnerData) {
             winnerData.newRoundTxHash
         ];
         await runDB(sql, params);
-        console.log(`Winner data saved for Round ${winnerData.roundId}`);
+        console.log(`💾 Winner data saved for Round ${winnerData.roundId}`);
     } catch (err) {
-        console.error('Erreur lors de l\'insertion des données', err.message);
+        console.error('❌ Erreur lors de l\'insertion des données', err.message);
         throw err;
     }
 }
@@ -375,7 +395,7 @@ async function saveWinnerToDB(winnerData) {
 async function performDraw() {
     try {
         await setDrawStatus('en_cours');
-        console.log("Checking bounty wallet balance...");
+        console.log("💰 Checking bounty wallet balance...");
         const bountyData = await checkBountyBalance();
         const bountyBalance = bountyData.balanceFormatted;
         if (bountyBalance <= 0) {
@@ -385,10 +405,10 @@ async function performDraw() {
         }
         console.log(`✅ Bounty wallet has a positive balance: ${bountyBalance} INKY. Continuing with draw.`);
         const ROUND_ID = await getCurrentRound();
-        console.log("Current round:", ROUND_ID);
+        console.log("🎯 Current round:", ROUND_ID);
 
         const numberOfParticipants = await getParticipantCount(ROUND_ID);
-        console.log(`Number of participants for round ${ROUND_ID}: ${numberOfParticipants}`);
+        console.log(`👥 Number of participants for round ${ROUND_ID}: ${numberOfParticipants}`);
         if (numberOfParticipants < MIN_PARTICIPANTS) {
             console.log(`⚠️ Number of participants (${numberOfParticipants}) is below the required threshold of ${MIN_PARTICIPANTS}. Draw is postponed. No new round will be started.`);
             await setDrawStatus('termine');
@@ -397,7 +417,7 @@ async function performDraw() {
 
         const tickets = await fetchTickets(ROUND_ID);
         if (tickets.length === 0) {
-            console.log("No tickets found for this round. Starting a new round and exiting.");
+            console.log("❌ No tickets found for this round. Starting a new round and exiting.");
             await startNextRound();
             await setDrawStatus('termine');
             return;
@@ -408,7 +428,7 @@ async function performDraw() {
         const drawDateUTC = now.toISOString().replace("T", " ").replace(".000Z", " UTC");
 
         const ethHashes = await waitForConfirmedEthBlocks(targetTimestamp, ETH_BLOCKS_N);
-        ethHashes.forEach((h, i) => console.log(`Block #${i + 1} hash:`, h));
+        ethHashes.forEach((h, i) => console.log(`🔗 Block #${i + 1} hash:`, h));
 
         const combinedSeed = ethers.keccak256(ethers.concat(ethHashes.map(h => getBytes(h))));
         const seedBigInt = BigInt(combinedSeed);
@@ -416,18 +436,17 @@ async function performDraw() {
         const winnerIndex = Number(seedModulo);
         const winner = tickets[winnerIndex];
         console.log("🏆 Winner:", winner);
+        
         const participantsGrouped = {};
         tickets.forEach((addr, idx) => {
             if (!participantsGrouped[addr]) participantsGrouped[addr] = [];
             participantsGrouped[addr].push(idx);
         });
         
-        // Exécution de la transaction du Smart Contract
         const dataBounty = await executeContractTransfer(winner); 
         const newRoundTxHash = await startNextRound();
         
-        // Génération du rapport
-        generatePDFReport({
+        await generatePDFReport({
             targetDate: drawDateUTC,
             totalTickets: tickets.length,
             participantsGrouped,
@@ -441,7 +460,6 @@ async function performDraw() {
             burnAmount: dataBounty.burnAmount 
         }, ROUND_ID, dataBounty.txHash, newRoundTxHash);
 
-        // Sauvegarde en base de données
         const winnerData = {
             roundId: ROUND_ID.toString(),
             winner,
@@ -457,27 +475,34 @@ async function performDraw() {
         await saveWinnerToDB(winnerData);
         console.log(`💾 Données du gagnant exportées vers la base de données.`);
         await setDrawStatus('termine');
+        console.log('✅ Tirage terminé avec succès!');
     } catch (err) {
-        console.error("Error during draw:", err.message);
+        console.error("❌ Error during draw:", err.message);
         await setDrawStatus('erreur');
     }
 }
 
 // ===================== SCHEDULER =====================
-console.log(`Script de tirage au sort démarré. En attente de l'heure planifiée...`);
+console.log(`⏰ Script de tirage au sort démarré. En attente de l'heure planifiée...`);
+console.log(`📅 Prochain tirage: ${SCHEDULE_HOUR}:${SCHEDULE_MINUTE} UTC, jour ${SCHEDULE_DAY_OF_WEEK}`);
+
 cron.schedule(`${SCHEDULE_MINUTE} ${SCHEDULE_HOUR} * * ${SCHEDULE_DAY_OF_WEEK}`, () => {
     console.log(`\n🕒 Heure du tirage : ${SCHEDULE_HOUR}:${SCHEDULE_MINUTE} UTC. Exécution de la tâche...`);
     performDraw();
 }, {
     timezone: "Etc/UTC"
 });
-// Gérer la fermeture de la base de données à l'arrêt du processus
+
+// Gérer la fermeture de la base de données
 process.on('SIGINT', () => {
+    console.log('🛑 Arrêt du worker...');
     db.close((err) => {
         if (err) {
-            console.error(err.message);
+            console.error('❌ Erreur fermeture BDD:', err.message);
         }
-        console.log('Fermeture de la connexion à la base de données.');
+        console.log('✅ Fermeture de la connexion à la base de données.');
         process.exit(0);
     });
 });
+
+console.log('✅ Worker de tirage initialisé avec succès!');
