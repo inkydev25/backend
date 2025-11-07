@@ -12,6 +12,6 @@
     "ws": "^8.18.3"
   },
   "scripts": {
-    "start": "node server.js & node draw2.js & wait"
+    "start": "node server.js & node draw.js & wait"
   }
 }
