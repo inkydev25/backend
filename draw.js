@@ -1,5 +1,5 @@
 // draw.js
-// import dotenv from "dotenv";
+import dotenv from "dotenv";
 import { ethers, getBytes } from "ethers";
 import fs from "fs";
 import PDFDocument from "pdfkit";
@@ -7,7 +7,7 @@ import sqlite3 from 'sqlite3';
 import cron from 'node-cron';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 
-// dotenv.config();
+dotenv.config();
 
 // ===================== CONFIG =====================
 const BATCH_SIZE = 50000;
@@ -502,3 +502,4 @@ process.on('SIGINT', () => {
 
 
 export { performDraw, getCurrentRound, getRoundStats };
+
