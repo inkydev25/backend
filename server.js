@@ -6,7 +6,7 @@ import cors from 'cors';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 // Scriote du tirage
 // import './draw.js';
-//tes
+
 const { Pool } = pkg;
 
 const app = express();
@@ -22,18 +22,9 @@ const pool = new Pool({
 app.use(cors());
 
 // Crée les tables si elles n'existent pas
-// Crée les tables si elles n'existent pas
 async function initializeDatabase() {
   try {
-    console.log('🔧 Début initialisation BDD...');
-    console.log('DATABASE_URL:', process.env.DATABASE_URL ? '✅ Définie' : '❌ Non définie');
-    
-    // Test de connexion simple
-    const testResult = await pool.query('SELECT NOW() as current_time');
-    console.log('✅ Test connexion PostgreSQL réussi:', testResult.rows[0].current_time);
-
     // Crée la table pour les gagnants AVEC colonne pdf_data
-    console.log('🔧 Création table winners...');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS winners (
         roundId INTEGER PRIMARY KEY,
@@ -49,10 +40,8 @@ async function initializeDatabase() {
         pdf_data BYTEA
       )
     `);
-    console.log('✅ Table winners créée');
 
     // Crée la table pour le statut du tirage
-    console.log('🔧 Création table draw_status...');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS draw_status (
         id INTEGER PRIMARY KEY, 
@@ -60,20 +49,16 @@ async function initializeDatabase() {
         lastDrawDate TEXT
       )
     `);
-    console.log('✅ Table draw_status créée');
 
     // Initialise le statut si la table est vide
-    console.log('🔧 Vérification statut initial...');
     const result = await pool.query('SELECT COUNT(*) AS count FROM draw_status');
     if (parseInt(result.rows[0].count) === 0) {
       await pool.query('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, $1, $2)', ['termine', new Date().toISOString()]);
-      console.log('✅ Statut initial inséré');
     }
 
-    console.log('✅ Base de données PostgreSQL initialisée avec succès');
+    console.log('✅ Connecté à la base de données PostgreSQL.');
   } catch (err) {
-    console.error('❌ Erreur détaillée initialisation BDD:', err);
-    console.error('❌ Stack trace:', err.stack);
+    console.error('Erreur lors de la connexion à la BDD', err.message);
   }
 }
 
@@ -146,5 +131,3 @@ process.on('SIGINT', async () => {
   console.log('Fermeture de la connexion à la base de données.');
   process.exit(0);
 });
-
-
