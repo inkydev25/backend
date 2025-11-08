@@ -2,19 +2,11 @@
 import dotenv from "dotenv";
 import { ethers, getBytes } from "ethers";
 import PDFDocument from "pdfkit";
-import pkg from 'pg';
+import sqlite3 from 'sqlite3';
 import cron from 'node-cron';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 
-const { Pool } = pkg;
-
 dotenv.config();
-
-// Configuration PostgreSQL
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: true // Toujours forcer SSL en production sur Railway
-});
 
 // ===================== CONFIG =====================
 const BATCH_SIZE = 50000;
@@ -60,21 +52,59 @@ const nexeraProvider = new ethers.JsonRpcProvider("https://rpc.testnet.nexera.ne
 const inkyContract = new ethers.Contract(INKY_ADDRESS, INKY_ABI, nexeraProvider);
 const ticketSaleContract = new ethers.Contract(TICKET_SALE_ADDRESS, TICKET_SALE_ABI, nexeraProvider);
 
-// ➡️ Fonctions utilitaires de BDD PostgreSQL
+const db = new sqlite3.Database('winners.db', (err) => {
+    if (err) {
+        console.error('Erreur lors de la connexion à la BDD', err.message);
+    } else {
+        console.log('Connecté à la base de données SQLite pour le tirage.');
+        db.serialize(() => {
+            db.run(`
+                CREATE TABLE IF NOT EXISTS draw_status (
+                    id INTEGER PRIMARY KEY, 
+                    status TEXT NOT NULL, 
+                    lastDrawDate TEXT
+                )
+            `);
+       
+            db.run(`
+                CREATE TABLE IF NOT EXISTS winners (
+                    roundId INTEGER PRIMARY KEY,
+                    winner TEXT NOT NULL,
+                    bountyTxHash TEXT,
+                    prizeAmount TEXT,  
+                    burnAmount TEXT,   
+                    drawDateUTC TEXT,
+                    totalTickets INTEGER,
+                    numberOfParticipants INTEGER,
+                    newRoundStarted INTEGER,
+                    newRoundTxHash TEXT,
+                    pdf_data BLOB
+                )
+            `);
+            db.get('SELECT COUNT(*) AS count FROM draw_status', (err, row) => {
+                if (row && row.count === 0) {
+                    db.run('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, ?, ?)', ['termine', new Date().toISOString()]);
+                }
+            });
+        });
+    }
+});
+
+// ➡️ Fonctions utilitaires de BDD
 function runDB(sql, params = []) {
     return new Promise((resolve, reject) => {
-        pool.query(sql, params, (err, result) => {
+        db.run(sql, params, function(err) {
             if (err) return reject(err);
-            resolve(result.rowCount || 0);
+            resolve(this.changes);
         });
     });
 }
 
 function getDB(sql, params = []) {
     return new Promise((resolve, reject) => {
-        pool.query(sql, params, (err, result) => {
+        db.get(sql, params, (err, row) => {
             if (err) return reject(err);
-            resolve(result.rows[0] || null);
+            resolve(row);
         });
     });
 }
@@ -82,7 +112,7 @@ function getDB(sql, params = []) {
 async function setDrawStatus(status) {
     try {
         const date = new Date().toISOString();
-        const sql = 'UPDATE draw_status SET status = $1, lastDrawDate = $2 WHERE id = 1';
+        const sql = 'UPDATE draw_status SET status = ?, lastDrawDate = ? WHERE id = 1';
         await runDB(sql, [status, date]);
         console.log(`Statut du tirage mis à jour: ${status}`);
     } catch (err) {
@@ -332,7 +362,7 @@ async function createPDFBuffer(data, roundId, contractTxHash, newRoundTxHash) {
 }
 
 async function savePDFToDB(roundId, pdfBuffer) {
-    const sql = 'UPDATE winners SET pdf_data = $1 WHERE roundId = $2';
+    const sql = 'UPDATE winners SET pdf_data = ? WHERE roundId = ?';
     await runDB(sql, [pdfBuffer, roundId]);
 }
 
@@ -343,7 +373,7 @@ async function saveWinnerToDB(winnerData) {
                 roundId, winner, bountyTxHash, prizeAmount, burnAmount, 
                 drawDateUTC, totalTickets, numberOfParticipants, newRoundStarted, newRoundTxHash
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         const params = [
             parseInt(winnerData.roundId),
@@ -473,11 +503,16 @@ cron.schedule(`${SCHEDULE_MINUTE} ${SCHEDULE_HOUR} * * ${SCHEDULE_DAY_OF_WEEK}`,
 });
 
 // Gérer la fermeture de la base de données à l'arrêt du processus
-process.on('SIGINT', async () => {
-    await pool.end();
-    console.log('Fermeture de la connexion à la base de données.');
-    process.exit(0);
+process.on('SIGINT', () => {
+    db.close((err) => {
+        if (err) {
+            console.error(err.message);
+        }
+        console.log('Fermeture de la connexion à la base de données.');
+        process.exit(0);
+    });
 });
+
 
 export { performDraw, getCurrentRound, getRoundStats };
 
