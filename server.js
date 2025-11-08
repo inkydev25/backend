@@ -1,32 +1,34 @@
 // server.js
 import express from 'express';
-import sqlite3 from 'sqlite3';
+import pkg from 'pg';
 import cors from 'cors';
 // Importe les constantes de configuration
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
-// Scriote du tirage
-// import './draw.js';
 
+const { Client } = pkg;
 const app = express();
 const port = process.env.PORT || 3000;
-const dbFile = 'winners.db';
 
 // Utilisation de la bibliothèque 'cors' pour gérer les requêtes cross-origin
 app.use(cors());
 
 // ➡️ Gérer l'instance de la base de données de manière centralisée
-const db = new sqlite3.Database(dbFile, (err) => {
-    if (err) {
-        console.error('Erreur lors de la connexion à la BDD', err.message);
-        return;
-    }
-    console.log('Connecté à la base de données SQLite.');
+const db = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Crée les tables si elles n'existent pas
-db.serialize(() => {
-    // Crée la table pour les gagnants AVEC colonne pdf_data
-    db.run(`
+// Connexion à la base de données
+await db.connect();
+console.log('Connecté à la base de données PostgreSQL.');
+
+// Initialisation des tables
+await initDatabase();
+
+async function initDatabase() {
+    try {
+        // Table winners
+        await db.query(`
             CREATE TABLE IF NOT EXISTS winners (
                 roundId INTEGER PRIMARY KEY,
                 winner TEXT NOT NULL,
@@ -38,63 +40,62 @@ db.serialize(() => {
                 numberOfParticipants INTEGER,
                 newRoundStarted INTEGER,
                 newRoundTxHash TEXT,
-                pdf_data BLOB
+                pdf_data BYTEA
             )
-    `, (err) => {
-        if (err) console.error('Erreur lors de la création de la table winners', err.message);
-    });
+        `);
 
-    // Crée la table pour le statut du tirage
-    db.run(`
-        CREATE TABLE IF NOT EXISTS draw_status (
-            id INTEGER PRIMARY KEY, 
-            status TEXT NOT NULL, 
-            lastDrawDate TEXT
-        )
-    `, (err) => {
-        if (err) console.error('Erreur lors de la création de la table draw_status', err.message);
-    });
+        // Table draw_status
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS draw_status (
+                id INTEGER PRIMARY KEY, 
+                status TEXT NOT NULL, 
+                lastDrawDate TEXT
+            )
+        `);
 
-    // Initialise le statut si la table est vide
-    db.get('SELECT COUNT(*) AS count FROM draw_status', (err, row) => {
-        if (row && row.count === 0) {
-            db.run('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, ?, ?)', ['termine', new Date().toISOString()]);
+        // Initialise le statut si la table est vide
+        const result = await db.query('SELECT COUNT(*) AS count FROM draw_status');
+        if (parseInt(result.rows[0].count) === 0) {
+            await db.query('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, $1, $2)', ['termine', new Date().toISOString()]);
         }
-    });
-});
+    } catch (err) {
+        console.error('Erreur lors de l\'initialisation de la base de données:', err.message);
+        throw err;
+    }
+}
 
 // Endpoint pour récupérer tous les gagnants (triés du plus récent au plus ancien)
-app.get('/winners', (req, res) => {
-    const sql = 'SELECT roundId, winner, bountyTxHash, prizeAmount, burnAmount, drawDateUTC, totalTickets, numberOfParticipants, newRoundStarted, newRoundTxHash FROM winners ORDER BY roundId DESC';
-    db.all(sql, (err, rows) => {
-        if (err) {
-            console.error('Erreur lors de la récupération des données', err.message);
-            return res.status(500).json({ error: 'Error fetching winners.' });
-        }
-        res.json(rows);
-    });
+app.get('/winners', async (req, res) => {
+    try {
+        const sql = 'SELECT roundId, winner, bountyTxHash, prizeAmount, burnAmount, drawDateUTC, totalTickets, numberOfParticipants, newRoundStarted, newRoundTxHash FROM winners ORDER BY roundId DESC';
+        const result = await db.query(sql);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Erreur lors de la récupération des données', err.message);
+        return res.status(500).json({ error: 'Error fetching winners.' });
+    }
 });
 
 // Endpoint pour télécharger les PDF
-app.get('/api/pdf/:roundId', (req, res) => {
-    const roundId = req.params.roundId;
-    const sql = 'SELECT pdf_data FROM winners WHERE roundId = ?';
-    
-    db.get(sql, [roundId], (err, row) => {
-        if (err) {
-            console.error('Erreur récupération PDF:', err.message);
-            return res.status(500).json({ error: 'Error fetching PDF' });
-        }
+app.get('/api/pdf/:roundId', async (req, res) => {
+    try {
+        const roundId = req.params.roundId;
+        const sql = 'SELECT pdf_data FROM winners WHERE roundId = $1';
         
-        if (!row || !row.pdf_data) {
+        const result = await db.query(sql, [roundId]);
+        
+        if (!result.rows[0] || !result.rows[0].pdf_data) {
             return res.status(404).json({ error: 'PDF not found for this round' });
         }
         
         // Servir le PDF
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="INKY_Tombola_report_${roundId}.pdf"`);
-        res.send(row.pdf_data);
-    });
+        res.send(result.rows[0].pdf_data);
+    } catch (err) {
+        console.error('Erreur récupération PDF:', err.message);
+        return res.status(500).json({ error: 'Error fetching PDF' });
+    }
 });
 
 // Endpoint pour obtenir l'heure du prochain tirage
@@ -107,15 +108,15 @@ app.get('/api/draw-info', (req, res) => {
 });
 
 // Endpoint pour obtenir le statut du tirage
-app.get('/api/draw-status', (req, res) => {
-    const sql = 'SELECT * FROM draw_status WHERE id = 1';
-    db.get(sql, (err, row) => {
-        if (err) {
-            console.error('Erreur lors de la récupération du statut du tirage', err.message);
-            return res.status(500).json({ error: 'Error fetching draw status.' });
-        }
-        res.json(row || { status: 'termine', lastDrawDate: null });
-    });
+app.get('/api/draw-status', async (req, res) => {
+    try {
+        const sql = 'SELECT * FROM draw_status WHERE id = 1';
+        const result = await db.query(sql);
+        res.json(result.rows[0] || { status: 'termine', lastDrawDate: null });
+    } catch (err) {
+        console.error('Erreur lors de la récupération du statut du tirage', err.message);
+        return res.status(500).json({ error: 'Error fetching draw status.' });
+    }
 });
 
 // Démarrer le serveur
@@ -124,12 +125,13 @@ app.listen(port, () => {
 });
 
 // Gérer la fermeture de la base de données à l'arrêt du processus
-process.on('SIGINT', () => {
-    db.close((err) => {
-        if (err) {
-            console.error(err.message);
-        }
+process.on('SIGINT', async () => {
+    try {
+        await db.end();
         console.log('Fermeture de la connexion à la base de données.');
         process.exit(0);
-    });
+    } catch (err) {
+        console.error('Erreur lors de la fermeture de la connexion:', err.message);
+        process.exit(1);
+    }
 });
