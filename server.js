@@ -6,7 +6,7 @@ import cors from 'cors';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 // Scriote du tirage
 // import './draw.js';
-
+//tes
 const { Pool } = pkg;
 
 const app = express();
@@ -146,4 +146,5 @@ process.on('SIGINT', async () => {
   console.log('Fermeture de la connexion à la base de données.');
   process.exit(0);
 });
+
 
