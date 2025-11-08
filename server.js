@@ -2,11 +2,15 @@
 import express from 'express';
 import sqlite3 from 'sqlite3';
 import cors from 'cors';
-
+import path from 'path';
+import { fileURLToPath } from 'url';
 // Importe les constantes de configuration
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 // Scriote du tirage
 // import './draw.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -14,6 +18,8 @@ const dbFile = 'winners.db';
 
 // Utilisation de la bibliothèque 'cors' pour gérer les requêtes cross-origin
 app.use(cors());
+
+app.use('/archives_rounds_pdf', express.static(path.join(__dirname, 'archives_rounds_pdf')));
 
 // ➡️ Gérer l'instance de la base de données de manière centralisée
 const db = new sqlite3.Database(dbFile, (err) => {
@@ -110,4 +116,5 @@ process.on('SIGINT', () => {
         console.log('Fermeture de la connexion à la base de données.');
         process.exit(0);
     });
+
 });
