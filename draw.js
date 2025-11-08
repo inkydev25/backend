@@ -454,6 +454,21 @@ async function performDraw() {
         // Exécution de la transaction du Smart Contract
         const dataBounty = await executeContractTransfer(winner); 
         const newRoundTxHash = await startNextRound();
+
+        // SAUVEGARDE D'ABORD les données du gagnant
+        const winnerData = {
+            roundId: ROUND_ID.toString(),
+            winner,
+            bountyTxHash: dataBounty.txHash, 
+            prizeAmount: dataBounty.prizeAmount,
+            burnAmount: dataBounty.burnAmount, 
+            drawDateUTC: drawDateUTC,
+            totalTickets: tickets.length,
+            numberOfParticipants: Object.keys(participipantsGrouped).length,
+            newRoundStarted: true,
+            newRoundTxHash: newRoundTxHash
+        };
+        await saveWinnerToDB(winnerData);
         
         // Génération du rapport
         await generatePDFReport({
@@ -470,20 +485,6 @@ async function performDraw() {
             burnAmount: dataBounty.burnAmount 
         }, ROUND_ID, dataBounty.txHash, newRoundTxHash);
 
-        // Sauvegarde en base de données
-        const winnerData = {
-            roundId: ROUND_ID.toString(),
-            winner,
-            bountyTxHash: dataBounty.txHash, 
-            prizeAmount: dataBounty.prizeAmount,
-            burnAmount: dataBounty.burnAmount, 
-            drawDateUTC: drawDateUTC,
-            totalTickets: tickets.length,
-            numberOfParticipants: Object.keys(participantsGrouped).length,
-            newRoundStarted: true,
-            newRoundTxHash: newRoundTxHash
-        };
-        await saveWinnerToDB(winnerData);
         console.log(`💾 Données du gagnant exportées vers la base de données.`);
         await setDrawStatus('termine');
     } catch (err) {
@@ -514,3 +515,4 @@ process.on('SIGINT', () => {
 
 
 export { performDraw, getCurrentRound, getRoundStats };
+
