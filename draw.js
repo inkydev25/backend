@@ -1,20 +1,12 @@
 // draw.js
 import dotenv from "dotenv";
 import { ethers, getBytes } from "ethers";
-import fs from "fs";
 import PDFDocument from "pdfkit";
 import sqlite3 from 'sqlite3';
 import cron from 'node-cron';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
-import path from 'path';
 
 dotenv.config();
-
-const pdfDir = path.join(process.cwd(), 'archives_rounds_pdf');
-if (!fs.existsSync(pdfDir)) {
-    fs.mkdirSync(pdfDir, { recursive: true });
-    console.log('Dossier archives_rounds_pdf créé');
-}
 
 // ===================== CONFIG =====================
 const BATCH_SIZE = 50000;
@@ -85,7 +77,8 @@ const db = new sqlite3.Database('winners.db', (err) => {
                     totalTickets INTEGER,
                     numberOfParticipants INTEGER,
                     newRoundStarted INTEGER,
-                    newRoundTxHash TEXT
+                    newRoundTxHash TEXT,
+                    pdf_data BLOB
                 )
             `);
             db.get('SELECT COUNT(*) AS count FROM draw_status', (err, row) => {
@@ -302,54 +295,75 @@ async function startNextRound() {
 
 // Fonction de génération de PDF MISE À JOUR
 async function generatePDFReport(data, roundId, contractTxHash = null, newRoundTxHash = null) {
-    const archiveFileName = path.join(pdfDir, `INKY_Tombola_report_${roundId}.pdf`);
-
-    // Récupérer le plafond actuel du SC pour le reporting
-    const maxBountyAmountINKY = await ticketSaleContract.maxBountyAmountINKY();
-    const maxBountyAmount = maxBountyAmountINKY.toString();
-
-    const createAndWritePdf = (filePath) => {
-        const doc = new PDFDocument({ margin: 30 });
-        doc.pipe(fs.createWriteStream(filePath));
-
-        doc.fontSize(20).text(`INKY Tombola - Round ${roundId} Report`, { align: "center" });
-        doc.moveDown();
-        doc.fontSize(12).text(`Reference draw date (UTC): ${data.targetDate}`);
-        doc.text(`Total tickets: ${data.totalTickets}`);
-        doc.text(`Number of participants: ${Object.keys(data.participantsGrouped).length}`);
-        doc.moveDown();
-        doc.text("Participants and their ticket indexes (grouped):");
-        for (const [wallet, indexes] of Object.entries(data.participantsGrouped)) {
-            doc.text(`   ${wallet} [${indexes.join(", ")}]`);
-        }
-        doc.moveDown();
-        doc.text("Blockchain block hashes used for the draw:");
-        data.ethHashes.forEach((h, i) => doc.text(`   Block #${i + 1} hash: ${h}`));
-        doc.moveDown();
-        doc.text(`Combined seed (keccak256): ${data.combinedSeed}`);
-        doc.text(`Seed as BigInt: ${data.seedBigInt}`);
-        doc.text(`Result modulo number of tickets: ${data.seedModulo}`);
-        doc.text(`Winner index: ${data.winnerIndex}`);
-        doc.text(`Winning wallet: ${data.winner}`);
-        
-        // Affichage du prix 
-        doc.text(`Prize amount transferred to winner (Capped at ${maxBountyAmount} INKY): ${data.prizeAmount} INKY`);
-
-        if (data.burnAmount && parseFloat(data.burnAmount) > 0) {
-            doc.text(`Surplus amount burned: ${data.burnAmount} INKY`);
-        } else {
-            doc.text(`Surplus amount burned: None`);
-        }
-        if (contractTxHash) doc.text(`Bounty transfer transaction hash (Price & Burn): ${contractTxHash}`); 
-        
-        if (newRoundTxHash) doc.text(`New round started tx hash: ${newRoundTxHash}`);
-        doc.moveDown();
-        doc.text("This report is automatically generated to ensure transparency and verifiability.", { italics: true });
-        doc.end();
-    };
+    // Créer le buffer PDF
+    const pdfBuffer = await createPDFBuffer(data, roundId, contractTxHash, newRoundTxHash);
     
-    createAndWritePdf(archiveFileName);
-    console.log(`📄 PDF generated (archived): ${archiveFileName}`);
+    // Sauvegarde dans la BDD
+    await savePDFToDB(roundId, pdfBuffer);
+    
+    console.log(`📄 PDF généré et sauvegardé en BDD pour le round ${roundId}`);
+    return pdfBuffer;
+}
+
+async function createPDFBuffer(data, roundId, contractTxHash, newRoundTxHash) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            const chunks = [];
+            const doc = new PDFDocument({ margin: 30 });
+            
+            doc.on('data', chunk => chunks.push(chunk));
+            doc.on('end', () => resolve(Buffer.concat(chunks)));
+            doc.on('error', reject);
+
+            // Récupérer le plafond actuel du SC pour le reporting
+            const maxBountyAmountINKY = await ticketSaleContract.maxBountyAmountINKY();
+            const maxBountyAmount = maxBountyAmountINKY.toString();
+
+            // Contenu du PDF
+            doc.fontSize(20).text(`INKY Tombola - Round ${roundId} Report`, { align: "center" });
+            doc.moveDown();
+            doc.fontSize(12).text(`Reference draw date (UTC): ${data.targetDate}`);
+            doc.text(`Total tickets: ${data.totalTickets}`);
+            doc.text(`Number of participants: ${Object.keys(data.participantsGrouped).length}`);
+            doc.moveDown();
+            doc.text("Participants and their ticket indexes (grouped):");
+            for (const [wallet, indexes] of Object.entries(data.participantsGrouped)) {
+                doc.text(`   ${wallet} [${indexes.join(", ")}]`);
+            }
+            doc.moveDown();
+            doc.text("Blockchain block hashes used for the draw:");
+            data.ethHashes.forEach((h, i) => doc.text(`   Block #${i + 1} hash: ${h}`));
+            doc.moveDown();
+            doc.text(`Combined seed (keccak256): ${data.combinedSeed}`);
+            doc.text(`Seed as BigInt: ${data.seedBigInt}`);
+            doc.text(`Result modulo number of tickets: ${data.seedModulo}`);
+            doc.text(`Winner index: ${data.winnerIndex}`);
+            doc.text(`Winning wallet: ${data.winner}`);
+            
+            // Affichage du prix 
+            doc.text(`Prize amount transferred to winner (Capped at ${maxBountyAmount} INKY): ${data.prizeAmount} INKY`);
+
+            if (data.burnAmount && parseFloat(data.burnAmount) > 0) {
+                doc.text(`Surplus amount burned: ${data.burnAmount} INKY`);
+            } else {
+                doc.text(`Surplus amount burned: None`);
+            }
+            if (contractTxHash) doc.text(`Bounty transfer transaction hash (Price & Burn): ${contractTxHash}`); 
+            
+            if (newRoundTxHash) doc.text(`New round started tx hash: ${newRoundTxHash}`);
+            doc.moveDown();
+            doc.text("This report is automatically generated to ensure transparency and verifiability.", { italics: true });
+            
+            doc.end();
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+async function savePDFToDB(roundId, pdfBuffer) {
+    const sql = 'UPDATE winners SET pdf_data = ? WHERE roundId = ?';
+    await runDB(sql, [pdfBuffer, roundId]);
 }
 
 async function saveWinnerToDB(winnerData) {
@@ -442,7 +456,7 @@ async function performDraw() {
         const newRoundTxHash = await startNextRound();
         
         // Génération du rapport
-        generatePDFReport({
+        await generatePDFReport({
             targetDate: drawDateUTC,
             totalTickets: tickets.length,
             participantsGrouped,
@@ -500,6 +514,3 @@ process.on('SIGINT', () => {
 
 
 export { performDraw, getCurrentRound, getRoundStats };
-
-
-
