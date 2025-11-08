@@ -13,6 +13,8 @@
     "ws": "^8.18.3"
   },
   "scripts": {
-    "start": "node server.js & node draw.js & wait"
+    "start": "node server.js",
+    "draw": "node draw.js",
+    "dev": "node server.js & node draw.js"
   }
 }
