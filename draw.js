@@ -302,7 +302,6 @@ async function startNextRound() {
 
 // Fonction de génération de PDF MISE À JOUR
 async function generatePDFReport(data, roundId, contractTxHash = null, newRoundTxHash = null) {
-    const staticFileName = `INKY_Tombola_report.pdf`;
     const archiveFileName = path.join(pdfDir, `INKY_Tombola_report_${roundId}.pdf`);
 
     // Récupérer le plafond actuel du SC pour le reporting
@@ -348,8 +347,6 @@ async function generatePDFReport(data, roundId, contractTxHash = null, newRoundT
         doc.text("This report is automatically generated to ensure transparency and verifiability.", { italics: true });
         doc.end();
     };
-    createAndWritePdf(staticFileName);
-    console.log(`📄 PDF generated (static): ${staticFileName}`);
     
     createAndWritePdf(archiveFileName);
     console.log(`📄 PDF generated (archived): ${archiveFileName}`);
@@ -503,5 +500,6 @@ process.on('SIGINT', () => {
 
 
 export { performDraw, getCurrentRound, getRoundStats };
+
 
 
