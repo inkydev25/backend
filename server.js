@@ -12,10 +12,10 @@ const { Pool } = pkg;
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configuration PostgreSQL
+// Configuration PostgreSQL pour Railway
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: true // Toujours forcer SSL en production sur Railway
 });
 
 // Utilisation de la bibliothèque 'cors' pour gérer les requêtes cross-origin
@@ -131,3 +131,4 @@ process.on('SIGINT', async () => {
   console.log('Fermeture de la connexion à la base de données.');
   process.exit(0);
 });
+
