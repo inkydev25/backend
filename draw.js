@@ -464,7 +464,7 @@ async function performDraw() {
             burnAmount: dataBounty.burnAmount, 
             drawDateUTC: drawDateUTC,
             totalTickets: tickets.length,
-            numberOfParticipants: Object.keys(participipantsGrouped).length,
+            numberOfParticipants: Object.keys(participantsGrouped).length,
             newRoundStarted: true,
             newRoundTxHash: newRoundTxHash
         };
@@ -515,4 +515,5 @@ process.on('SIGINT', () => {
 
 
 export { performDraw, getCurrentRound, getRoundStats };
+
 
