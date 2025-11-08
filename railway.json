@@ -3,7 +3,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "npm start",
+    "startCommand": "npm run start --omit=dev",
     "restartPolicyType": "ON_FAILURE"
   }
 }
