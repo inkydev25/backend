@@ -6,8 +6,15 @@ import PDFDocument from "pdfkit";
 import sqlite3 from 'sqlite3';
 import cron from 'node-cron';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
+import path from 'path';
 
 dotenv.config();
+
+const pdfDir = path.join(process.cwd(), 'archives_rounds_pdf');
+if (!fs.existsSync(pdfDir)) {
+    fs.mkdirSync(pdfDir, { recursive: true });
+    console.log('Dossier archives_rounds_pdf créé');
+}
 
 // ===================== CONFIG =====================
 const BATCH_SIZE = 50000;
@@ -296,13 +303,7 @@ async function startNextRound() {
 // Fonction de génération de PDF MISE À JOUR
 async function generatePDFReport(data, roundId, contractTxHash = null, newRoundTxHash = null) {
     const staticFileName = `INKY_Tombola_report.pdf`;
-    const archiveDir = `archives_rounds_pdf`;
-    const archiveFileName = `${archiveDir}/INKY_Tombola_report_${roundId}.pdf`;
-
-    if (!fs.existsSync(archiveDir)) {
-        fs.mkdirSync(archiveDir, { recursive: true });
-        console.log(`Dossier d'archives créé: ${archiveDir}`);
-    }
+    const archiveFileName = path.join(pdfDir, `INKY_Tombola_report_${roundId}.pdf`);
 
     // Récupérer le plafond actuel du SC pour le reporting
     const maxBountyAmountINKY = await ticketSaleContract.maxBountyAmountINKY();
@@ -502,4 +503,5 @@ process.on('SIGINT', () => {
 
 
 export { performDraw, getCurrentRound, getRoundStats };
+
 
