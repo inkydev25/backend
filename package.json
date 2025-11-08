@@ -3,7 +3,6 @@
   "dependencies": {
     "axios": "^1.11.0",
     "cors": "^2.8.5",
-    "pg": "^8.11.3",
     "dotenv": "^17.2.2",
     "ethers": "^6.15.0",
     "express": "^5.1.0",
@@ -13,8 +12,6 @@
     "ws": "^8.18.3"
   },
   "scripts": {
-    "start": "node server.js",
-    "draw": "node draw.js",
-    "dev": "node server.js & node draw.js"
+    "start": "node server.js & node draw.js & wait"
   }
 }
