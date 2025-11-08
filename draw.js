@@ -13,7 +13,7 @@ dotenv.config();
 // Configuration PostgreSQL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: true // Toujours forcer SSL en production sur Railway
 });
 
 // ===================== CONFIG =====================
@@ -480,3 +480,4 @@ process.on('SIGINT', async () => {
 });
 
 export { performDraw, getCurrentRound, getRoundStats };
+
