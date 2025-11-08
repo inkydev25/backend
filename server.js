@@ -2,15 +2,10 @@
 import express from 'express';
 import sqlite3 from 'sqlite3';
 import cors from 'cors';
-import path from 'path';
-import { fileURLToPath } from 'url';
 // Importe les constantes de configuration
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 // Scriote du tirage
 // import './draw.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -18,8 +13,6 @@ const dbFile = 'winners.db';
 
 // Utilisation de la bibliothèque 'cors' pour gérer les requêtes cross-origin
 app.use(cors());
-
-app.use('/archives_rounds_pdf', express.static(path.join(__dirname, 'archives_rounds_pdf')));
 
 // ➡️ Gérer l'instance de la base de données de manière centralisée
 const db = new sqlite3.Database(dbFile, (err) => {
@@ -32,7 +25,7 @@ const db = new sqlite3.Database(dbFile, (err) => {
 
 // Crée les tables si elles n'existent pas
 db.serialize(() => {
-    // Crée la table pour les gagnants
+    // Crée la table pour les gagnants AVEC colonne pdf_data
     db.run(`
             CREATE TABLE IF NOT EXISTS winners (
                 roundId INTEGER PRIMARY KEY,
@@ -44,7 +37,8 @@ db.serialize(() => {
                 totalTickets INTEGER,
                 numberOfParticipants INTEGER,
                 newRoundStarted INTEGER,
-                newRoundTxHash TEXT
+                newRoundTxHash TEXT,
+                pdf_data BLOB
             )
     `, (err) => {
         if (err) console.error('Erreur lors de la création de la table winners', err.message);
@@ -71,13 +65,35 @@ db.serialize(() => {
 
 // Endpoint pour récupérer tous les gagnants (triés du plus récent au plus ancien)
 app.get('/winners', (req, res) => {
-    const sql = 'SELECT * FROM winners ORDER BY roundId DESC';
+    const sql = 'SELECT roundId, winner, bountyTxHash, prizeAmount, burnAmount, drawDateUTC, totalTickets, numberOfParticipants, newRoundStarted, newRoundTxHash FROM winners ORDER BY roundId DESC';
     db.all(sql, (err, rows) => {
         if (err) {
             console.error('Erreur lors de la récupération des données', err.message);
             return res.status(500).json({ error: 'Error fetching winners.' });
         }
         res.json(rows);
+    });
+});
+
+// Endpoint pour télécharger les PDF
+app.get('/api/pdf/:roundId', (req, res) => {
+    const roundId = req.params.roundId;
+    const sql = 'SELECT pdf_data FROM winners WHERE roundId = ?';
+    
+    db.get(sql, [roundId], (err, row) => {
+        if (err) {
+            console.error('Erreur récupération PDF:', err.message);
+            return res.status(500).json({ error: 'Error fetching PDF' });
+        }
+        
+        if (!row || !row.pdf_data) {
+            return res.status(404).json({ error: 'PDF not found for this round' });
+        }
+        
+        // Servir le PDF
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="INKY_Tombola_report_${roundId}.pdf"`);
+        res.send(row.pdf_data);
     });
 });
 
@@ -116,5 +132,4 @@ process.on('SIGINT', () => {
         console.log('Fermeture de la connexion à la base de données.');
         process.exit(0);
     });
-
 });
