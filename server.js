@@ -2,6 +2,10 @@
 import express from 'express';
 import pkg from 'pg';
 import cors from 'cors';
+// Importe les constantes de configuration
+import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
+// Scriote du tirage
+// import './draw.js';
 
 const { Pool } = pkg;
 
@@ -20,7 +24,7 @@ app.use(cors());
 // Crée les tables si elles n'existent pas
 async function initializeDatabase() {
   try {
-    // Crée la table pour les gagnants
+    // Crée la table pour les gagnants AVEC colonne pdf_data
     await pool.query(`
       CREATE TABLE IF NOT EXISTS winners (
         roundId INTEGER PRIMARY KEY,
@@ -52,9 +56,9 @@ async function initializeDatabase() {
       await pool.query('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, $1, $2)', ['termine', new Date().toISOString()]);
     }
 
-    console.log('✅ Base de données PostgreSQL initialisée');
+    console.log('✅ Connecté à la base de données PostgreSQL.');
   } catch (err) {
-    console.error('❌ Erreur initialisation BDD:', err);
+    console.error('Erreur lors de la connexion à la BDD', err.message);
   }
 }
 
@@ -68,7 +72,7 @@ app.get('/winners', async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error('Erreur lors de la récupération des données', err.message);
-    res.status(500).json({ error: 'Error fetching winners.' });
+    return res.status(500).json({ error: 'Error fetching winners.' });
   }
 });
 
@@ -88,7 +92,7 @@ app.get('/api/pdf/:roundId', async (req, res) => {
     res.send(result.rows[0].pdf_data);
   } catch (err) {
     console.error('Erreur récupération PDF:', err.message);
-    res.status(500).json({ error: 'Error fetching PDF' });
+    return res.status(500).json({ error: 'Error fetching PDF' });
   }
 });
 
@@ -112,7 +116,7 @@ app.get('/api/draw-status', async (req, res) => {
     }
   } catch (err) {
     console.error('Erreur lors de la récupération du statut du tirage', err.message);
-    res.status(500).json({ error: 'Error fetching draw status.' });
+    return res.status(500).json({ error: 'Error fetching draw status.' });
   }
 });
 
