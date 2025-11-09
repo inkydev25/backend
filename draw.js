@@ -2,11 +2,10 @@
 import dotenv from "dotenv";
 import { ethers, getBytes } from "ethers";
 import PDFDocument from "pdfkit";
-import pkg from 'pg';
+import sqlite3 from 'sqlite3';
 import cron from 'node-cron';
 import { SCHEDULE_HOUR, SCHEDULE_MINUTE, SCHEDULE_DAY_OF_WEEK } from './config.js';
 
-const { Client } = pkg;
 dotenv.config();
 
 // ===================== CONFIG =====================
@@ -53,83 +52,67 @@ const nexeraProvider = new ethers.JsonRpcProvider("https://rpc.testnet.nexera.ne
 const inkyContract = new ethers.Contract(INKY_ADDRESS, INKY_ABI, nexeraProvider);
 const ticketSaleContract = new ethers.Contract(TICKET_SALE_ADDRESS, TICKET_SALE_ABI, nexeraProvider);
 
-// Configuration PostgreSQL
-const db = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+const db = new sqlite3.Database('winners.db', (err) => {
+    if (err) {
+        console.error('Erreur lors de la connexion à la BDD', err.message);
+    } else {
+        console.log('Connecté à la base de données SQLite pour le tirage.');
+        db.serialize(() => {
+            db.run(`
+                CREATE TABLE IF NOT EXISTS draw_status (
+                    id INTEGER PRIMARY KEY, 
+                    status TEXT NOT NULL, 
+                    lastDrawDate TEXT
+                )
+            `);
+       
+            db.run(`
+                CREATE TABLE IF NOT EXISTS winners (
+                    roundId INTEGER PRIMARY KEY,
+                    winner TEXT NOT NULL,
+                    bountyTxHash TEXT,
+                    prizeAmount TEXT,  
+                    burnAmount TEXT,   
+                    drawDateUTC TEXT,
+                    totalTickets INTEGER,
+                    numberOfParticipants INTEGER,
+                    newRoundStarted INTEGER,
+                    newRoundTxHash TEXT,
+                    pdf_data BLOB
+                )
+            `);
+            db.get('SELECT COUNT(*) AS count FROM draw_status', (err, row) => {
+                if (row && row.count === 0) {
+                    db.run('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, ?, ?)', ['termine', new Date().toISOString()]);
+                }
+            });
+        });
+    }
 });
 
-// Connexion à la base de données
-await db.connect();
-console.log('Connecté à la base de données PostgreSQL pour le tirage.');
-
-// Initialisation des tables
-await initDatabase();
-
-async function initDatabase() {
-    try {
-        // Table draw_status
-        await db.query(`
-            CREATE TABLE IF NOT EXISTS draw_status (
-                id INTEGER PRIMARY KEY, 
-                status TEXT NOT NULL, 
-                lastDrawDate TEXT
-            )
-        `);
-
-        // Table winners
-        await db.query(`
-            CREATE TABLE IF NOT EXISTS winners (
-                roundId INTEGER PRIMARY KEY,
-                winner TEXT NOT NULL,
-                bountyTxHash TEXT,
-                prizeAmount TEXT,  
-                burnAmount TEXT,   
-                drawDateUTC TEXT,
-                totalTickets INTEGER,
-                numberOfParticipants INTEGER,
-                newRoundStarted INTEGER,
-                newRoundTxHash TEXT,
-                pdf_data BYTEA
-            )
-        `);
-
-        // Vérifier et initialiser draw_status si vide
-        const result = await db.query('SELECT COUNT(*) AS count FROM draw_status');
-        if (parseInt(result.rows[0].count) === 0) {
-            await db.query('INSERT INTO draw_status (id, status, lastDrawDate) VALUES (1, $1, $2)', ['termine', new Date().toISOString()]);
-        }
-    } catch (err) {
-        console.error('Erreur lors de l\'initialisation de la base de données:', err.message);
-        throw err;
-    }
-}
-
 // ➡️ Fonctions utilitaires de BDD
-async function runDB(sql, params = []) {
-    try {
-        const result = await db.query(sql, params);
-        return result.rowCount || 0;
-    } catch (err) {
-        console.error('Erreur DB:', err.message);
-        throw err;
-    }
+function runDB(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, function(err) {
+            if (err) return reject(err);
+            resolve(this.changes);
+        });
+    });
 }
 
-async function getDB(sql, params = []) {
-    try {
-        const result = await db.query(sql, params);
-        return result.rows[0] || null;
-    } catch (err) {
-        console.error('Erreur DB:', err.message);
-        throw err;
-    }
+function getDB(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => {
+            if (err) return reject(err);
+            resolve(row);
+        });
+    });
 }
 
 async function setDrawStatus(status) {
     try {
         const date = new Date().toISOString();
-        const sql = 'UPDATE draw_status SET status = $1, lastDrawDate = $2 WHERE id = 1';
+        const sql = 'UPDATE draw_status SET status = ?, lastDrawDate = ? WHERE id = 1';
         await runDB(sql, [status, date]);
         console.log(`Statut du tirage mis à jour: ${status}`);
     } catch (err) {
@@ -379,7 +362,7 @@ async function createPDFBuffer(data, roundId, contractTxHash, newRoundTxHash) {
 }
 
 async function savePDFToDB(roundId, pdfBuffer) {
-    const sql = 'UPDATE winners SET pdf_data = $1 WHERE roundId = $2';
+    const sql = 'UPDATE winners SET pdf_data = ? WHERE roundId = ?';
     await runDB(sql, [pdfBuffer, roundId]);
 }
 
@@ -390,18 +373,7 @@ async function saveWinnerToDB(winnerData) {
                 roundId, winner, bountyTxHash, prizeAmount, burnAmount, 
                 drawDateUTC, totalTickets, numberOfParticipants, newRoundStarted, newRoundTxHash
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (roundId) 
-            DO UPDATE SET
-                winner = EXCLUDED.winner,
-                bountyTxHash = EXCLUDED.bountyTxHash,
-                prizeAmount = EXCLUDED.prizeAmount,
-                burnAmount = EXCLUDED.burnAmount,
-                drawDateUTC = EXCLUDED.drawDateUTC,
-                totalTickets = EXCLUDED.totalTickets,
-                numberOfParticipants = EXCLUDED.numberOfParticipants,
-                newRoundStarted = EXCLUDED.newRoundStarted,
-                newRoundTxHash = EXCLUDED.newRoundTxHash
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         const params = [
             parseInt(winnerData.roundId),
@@ -531,15 +503,16 @@ cron.schedule(`${SCHEDULE_MINUTE} ${SCHEDULE_HOUR} * * ${SCHEDULE_DAY_OF_WEEK}`,
 });
 
 // Gérer la fermeture de la base de données à l'arrêt du processus
-process.on('SIGINT', async () => {
-    try {
-        await db.end();
+process.on('SIGINT', () => {
+    db.close((err) => {
+        if (err) {
+            console.error(err.message);
+        }
         console.log('Fermeture de la connexion à la base de données.');
         process.exit(0);
-    } catch (err) {
-        console.error('Erreur lors de la fermeture de la connexion:', err.message);
-        process.exit(1);
-    }
+    });
 });
 
+
 export { performDraw, getCurrentRound, getRoundStats };
+
