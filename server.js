@@ -120,7 +120,7 @@ app.get('/api/draw-status', (req, res) => {
 
 // Démarrer le serveur
 app.listen(port, () => {
-    console.log(`Serveur d'API écoutant sur http://localhost:${port}`);
+    console.log(`Serveur d'API écoutant sur http://backend-production-4cb0c.up.railway.app:${port}`);
 });
 
 // Gérer la fermeture de la base de données à l'arrêt du processus
@@ -133,3 +133,4 @@ process.on('SIGINT', () => {
         process.exit(0);
     });
 });
+
